@@ -54,5 +54,14 @@ jobs:
           arm-none-eabi-gcc -c -Os -std=c99 -Wall -Wextra -Werror \
             -mcpu=cortex-m0plus -mthumb -Iinclude -Isrc/tx \
             -o earshot_tx.o src/tx/earshot_tx.c
+      - name: compile the examples
+        run: |
+          arm-none-eabi-gcc -c -Os -std=c99 -Wall -Wextra -Werror \
+            -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard \
+            -DEARSHOT_MAX_BLOCKS=64 -Iinclude -Iexamples/stm32 \
+            -o receiver.o examples/stm32/receiver.c
+          arm-none-eabi-gcc -c -Os -std=c99 -Wall -Wextra -Werror \
+            -mcpu=cortex-m0plus -mthumb -Iinclude -Isrc/tx -Iexamples/buzzer \
+            -o transmitter.o examples/buzzer/transmitter.c
       - name: report size
         run: arm-none-eabi-size *.o

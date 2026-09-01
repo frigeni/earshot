@@ -1,38 +1,63 @@
 # Earshot
 
-**An acoustic data channel for configuring embedded devices that have no
-network, no display and no keyboard.**
+**An acoustic data channel for embedded devices that have no network, no
+display and no keyboard.**
 
-A phone opens a web page and holds it near the board. The board receives its
-configuration through an ordinary microphone — near-ultrasonic tones, no
-pairing, no app, no radio to certify. One transmitter configures every device
-within earshot at once.
+Configuration goes *in* over near-ultrasonic tones: a phone opens a web page,
+holds it near the board, and the board receives its config through an ordinary
+microphone. Diagnostics come back *out* in the audible band: the device drives
+its piezo buzzer and the phone listens. No pairing, no app, no radio to certify.
+One transmitter reaches every device within earshot at once.
 
-> **Status: pre-release, under construction.** The channel works and is
-> verified; the authentication layer is specified ([`spec/SPEC.md`](spec/SPEC.md))
-> and being implemented. Do not deploy yet.
+> **Status: v1 draft.** Both directions work and are covered by CI (gcc, clang,
+> `arm-none-eabi`, sanitizers). The wire protocol (`ver = 1`) is not frozen and
+> has had no external review. Generate your own key before deploying anything.
 
 ## How it works
 
 The transmitter loops a short message forever, encoded with an **LT fountain
-code**. It never knows whether anyone is listening. A receiver that powers on
+code**, without knowing whether anyone is listening. A receiver that starts
 halfway through still reconstructs the whole message — there is no "the part I
-missed". Full details in [`spec/SPEC.md`](spec/SPEC.md).
+missed". Full details in [`spec/SPEC.md`](spec/SPEC.md) and
+[`spec/PROFILE-A.md`](spec/PROFILE-A.md).
 
-- 48 kHz mono audio, 16.4–18.8 kHz tone plan
-- ~8 useful bytes per second
-- C receiver: no `malloc`, ~8 KB flash, ~5 KB static RAM, < 2 MMAC/s on a Cortex-M4
-- authenticated payloads (SipHash-2-4) with a monotonic replay counter
+|  | Profile N — config in | Profile A — diagnostics out |
+|---|---|---|
+| direction | phone → device | device → phone |
+| band | 16.4–18.8 kHz, dual-tone | 2.3–4.1 kHz, single-tone MFSK |
+| transmitter | web page (Web Audio) | one GPIO pin, square wave |
+| receiver | C, this repo | web page (or the C decoder) |
+| rate | ~8 useful B/s | ~5 B/s (speed does not matter here) |
+
+Every payload is authenticated with **SipHash-2-4** over the same envelope.
+Inbound config also carries a 32-bit monotonic **replay counter**; first
+provisioning and large counter jumps need a physical-presence signal (a button,
+or a 60 s power-on window).
+
+## Measured footprint
+
+`arm-none-eabi-gcc -Os`, from CI:
+
+| | flash (`.text`) | RAM (state) |
+|---|---|---|
+| **receiver** (Profile N) | ~4.4 KB + libm | 5.8 KB (K≤32) · 6.75 KB (K≤64) · 12.5 KB (K≤255) |
+| **device transmitter** (Profile A) | ~0.4 KB + soliton table + SipHash/CRC (~1.2 KB) | 280 B |
+
+The transmitter's soliton table is 4.3 KB for K = 1..32; regenerate it for one
+K (`tools/soliton_table.py --kmax <K>`) and it drops to a few hundred bytes.
+Receiver CPU: the Goertzel bank is ~1.6 MMAC/s — a few percent of a Cortex-M4F.
+No `malloc` anywhere; no floating point on the transmitter.
 
 ## What it does not do
 
-- **Not a bulk transport.** ~8 B/s — configuration and keys, not firmware images.
-- **No return channel (v1).** No acknowledgements. A device-to-phone direction
-  over a piezo buzzer is planned (Profile A).
+- **Not a bulk transport.** A few bytes per second — configuration and keys, not
+  firmware images.
 - **No confidentiality by itself.** Payloads are authenticated, not encrypted.
-  Encrypt the payload in the application if it carries secrets.
-- **No security in an unmodified build.** The repository ships a demonstration
-  key only. You must generate your own — see [Security](#security).
+  Encrypt in the application if the config carries secrets.
+- **No anti-replay on diagnostics.** Outbound telemetry is signed but not
+  counter-checked; the phone takes no action on it.
+- **No security in an unmodified build.** The repo ships a demonstration key
+  only — see [Security](#security).
 
 ## Prior art
 
@@ -45,43 +70,38 @@ message.
 
 | path | contents |
 |------|----------|
-| `spec/`      | protocol specification — the source of truth (`SPEC.md`, `PROFILE-A.md`) |
-| `include/`   | `earshot.h` (receiver API), `earshot_tx.h` (device transmitter, Profile A — stub) |
-| `src/`       | portable C receiver; `src/tx/` is the device-side transmitter (Profile A — stub) |
-| `web/`       | self-contained transmitter + receiver web page |
-| `tools/`     | waveform generator, key generator, single-header amalgamation |
-| `tests/`     | unit vectors and end-to-end bench, run in CI |
-| `examples/`  | hardware integration (`stm32/` receiver, `buzzer/` transmitter) |
-
-Both directions are implemented. **Config in** (Profile N, near-ultrasonic,
-phone → device) and **diagnostics out** (Profile A, audible, device → phone over
-a piezo buzzer — `spec/PROFILE-A.md`). The device transmitter in `src/tx/` is
-integer-only: no libm, no floating point, one GPIO pin.
+| `spec/`     | protocol specification — the source of truth |
+| `include/`  | `earshot.h` (receiver API), `earshot_tx.h` (device transmitter API) |
+| `src/`      | portable C receiver; `src/tx/` the integer-only device transmitter |
+| `web/`      | self-contained transmitter + receiver web page |
+| `tools/`    | waveform generator, key generator, soliton table, amalgamation |
+| `tests/`    | unit vectors and end-to-end bench, run in CI |
+| `examples/` | `stm32/` receiver integration, `buzzer/` transmitter integration |
 
 ## Build
 
 ```
-make            # libearshot.a, the CLI decoder, the unit tests
+make            # libearshot.a, the CLI decoder, unit tests, the device tx
 make test       # unit tests + end-to-end bench (needs python3)
+sh tests/run.sh # what CI runs: build with -Werror, then the tests
 ```
 
-`tools/earshot_tx.py` synthesises a signed waveform; `tests/decode` recovers it.
+`tools/earshot_tx.py` synthesises a signed waveform and `tests/decode` recovers
+it; `tests/emit` drives the device transmitter for Profile A.
 
 ## Security
 
 Earshot authenticates every payload with a pre-shared key (one per `keyid`).
 This is a possession-of-key trust model, like a Wi-Fi passphrase: whoever holds
-the key can configure any device that accepts that `keyid`.
+the key can configure any device that accepts that `keyid`, and extracting the
+key from any transmitter or device compromises that `keyid` everywhere. See
+[`SECURITY.md`](SECURITY.md).
 
 **The repository contains no usable key.** Before anything real:
 
-1. Generate an operator file: `python tools/keygen.py` → `operator.json`.
+1. `python3 tools/keygen.py` → `operator.json` (a fresh random key).
 2. Install the same key in your device firmware.
 3. Keep `operator.json` out of version control (it is in `.gitignore`).
-
-Replay is bounded by a 32-bit monotonic counter carried in each message and
-stored by the device; first provisioning and large counter jumps require a
-physical-presence signal. See `spec/SPEC.md` §5.
 
 ## License
 

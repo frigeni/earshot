@@ -7,8 +7,13 @@ All notable changes to Earshot are recorded here. The protocol version is the
 
 ### Added
 - Protocol specification `spec/SPEC.md` (draft, protocol `ver = 1`).
-- Repository structure: portable C receiver, web transmitter, Python tools,
-  CI-run tests, STM32 example.
+- Portable C receiver, self-contained web transmitter + receiver, Python tools,
+  end-to-end bench and unit vectors run in CI (gcc, clang, `arm-none-eabi`,
+  address + undefined sanitizers).
+- `examples/stm32/` — receiver integration reference (mic selection, ADC+DMA at
+  48 kHz, the NVM counter, budgets) and `examples/buzzer/` — Profile A
+  transmitter integration (piezo drive, timer square wave, calling from a fault
+  handler). Both compile for their targets in CI.
 - **Profile A** — the audible device→phone return channel (`spec/PROFILE-A.md`).
   Single-lane MFSK 2.3–4.1 kHz, `2·f_min > f_max` so no square-wave harmonic
   can land on a tone. `earshot_profile_t` and single-lane decode in the C
