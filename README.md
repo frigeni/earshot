@@ -13,6 +13,9 @@ One transmitter reaches every device within earshot at once.
 > `arm-none-eabi`, sanitizers). The wire protocol (`ver = 1`) is not frozen and
 > has had no external review. Generate your own key before deploying anything.
 
+**Try it in the browser:** <https://frigeni.github.io/earshot/> — open it on two
+phones, hold them together, transmit on one and listen on the other.
+
 ## How it works
 
 The transmitter loops a short message forever, encoded with an **LT fountain
