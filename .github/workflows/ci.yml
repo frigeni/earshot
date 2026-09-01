@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build and test (${{ matrix.cc }}, -Werror)
+        run: CC=${{ matrix.cc }} sh tests/run.sh
+
+      - name: sanitizers (address, undefined)
+        run: |
+          make clean
+          make CC=${{ matrix.cc }} \
+               OPT="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all" \
+               WARN="-Wall -Wextra -Werror"
+          ./tests/test_unit
+          python3 tests/test_e2e.py
+
+      - name: single-header amalgamation compiles
+        run: |
+          python3 tools/amalgamate.py
+          printf '#define EARSHOT_IMPLEMENTATION\n#include "earshot_single.h"\n' > /tmp/amalg.c
+          ${{ matrix.cc }} -c -O2 -std=c99 -Wall -Wextra -Werror /tmp/amalg.c -o /tmp/amalg.o
+
+  embedded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install arm-none-eabi-gcc
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - name: compile the receiver for Cortex-M4
+        run: |
+          arm-none-eabi-gcc -c -Os -std=c99 -Wall -Wextra -Werror \
+            -mcpu=cortex-m4 -mthumb -Iinclude -Isrc \
+            -DEARSHOT_MAX_BLOCKS=64 \
+            src/earshot.c src/fountain.c src/envelope.c src/siphash.c src/crc.c
+      - name: report size
+        run: arm-none-eabi-size *.o

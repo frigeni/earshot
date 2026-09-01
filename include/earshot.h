@@ -22,11 +22,19 @@ extern "C" {
 /* Protocol version carried in the envelope header (SPEC 5.1). */
 #define EARSHOT_VERSION            1
 
-/* Compile-time limits. No allocation depends on runtime values. */
-#define EARSHOT_BLOCK              8
+/* Compile-time limits. No allocation depends on runtime values.
+ *
+ * EARSHOT_MAX_BLOCKS is the largest message the receiver will reconstruct, in
+ * 8-byte blocks. The wire format allows K up to 255; a frame announcing a
+ * larger K than this build supports is rejected. Lowering it shrinks the state
+ * struct substantially (the block store and the soliton table dominate). */
+#ifndef EARSHOT_MAX_BLOCKS
 #define EARSHOT_MAX_BLOCKS         255
+#endif
+
+#define EARSHOT_BLOCK              8
 #define EARSHOT_ENVELOPE_OVERHEAD  17    /* hdr+counter+len+tag+crc16 */
-#define EARSHOT_MAX_PAYLOAD        (EARSHOT_MAX_BLOCKS * EARSHOT_BLOCK - EARSHOT_ENVELOPE_OVERHEAD) /* 2023 */
+#define EARSHOT_MAX_PAYLOAD        (EARSHOT_MAX_BLOCKS * EARSHOT_BLOCK - EARSHOT_ENVELOPE_OVERHEAD)
 #define EARSHOT_KEY_BYTES          16    /* SipHash-2-4 key */
 #define EARSHOT_TAG_BYTES          8
 
@@ -101,8 +109,11 @@ typedef struct {
 /* ------------------------------------------------------------------- state - */
 /*
  * Opaque to callers: do not read or write fields. Exposed only so it can be
- * allocated without malloc. Size is dominated by the fountain buffers
- * (~4.5 KB). sizeof(earshot_t) is stable within a protocol version.
+ * allocated without malloc. With the default EARSHOT_MAX_BLOCKS it is roughly
+ * 13 KB (sub-block sample buffer, assembled envelope, block store, soliton
+ * table); lower EARSHOT_MAX_BLOCKS to shrink it. sizeof is stable within a
+ * protocol version and a given EARSHOT_MAX_BLOCKS. Call earshot_sizeof() from
+ * the build that will run, do not hard-code it.
  */
 typedef struct earshot earshot_t;
 

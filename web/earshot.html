@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earshot</title>
+<style>
+  :root{
+    --bg:#0c0b10; --panel:#16141d; --border:#2a2733;
+    --text:#ecebf2; --dim:#807b92; --wave:#7de0d4; --warm:#e0a05a; --bad:#e0605a;
+    --mono: ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --sans:"Avenir Next","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;padding:36px 20px 70px}
+  h1{font-family:var(--mono);font-size:clamp(26px,6vw,40px);font-weight:600;letter-spacing:-.03em;margin:0 0 8px;color:var(--wave)}
+  header p{margin:0;max-width:56ch;color:var(--dim)}
+  nav{display:flex;gap:2px;margin:30px 0 0;border-bottom:1px solid var(--border)}
+  nav button{font-family:var(--mono);font-size:14px;background:none;border:0;color:var(--dim);
+    padding:10px 18px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  nav button[aria-selected=true]{color:var(--wave);border-bottom-color:var(--wave)}
+  section{display:none;padding-top:26px} section.active{display:block}
+  textarea{width:100%;min-height:96px;background:var(--panel);color:var(--text);
+    border:1px solid var(--border);border-radius:2px;padding:12px;font-family:var(--sans);font-size:15px;resize:vertical}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0}
+  button.action{font-family:var(--mono);font-size:13px;cursor:pointer;background:var(--panel);
+    color:var(--text);border:1px solid var(--border);border-radius:2px;padding:10px 18px}
+  button.action.primary{background:var(--wave);color:#0c0b10;border-color:var(--wave);font-weight:600}
+  button.action:disabled{opacity:.35;cursor:not-allowed}
+  input[type=text]{background:var(--panel);color:var(--text);border:1px solid var(--border);
+    border-radius:2px;padding:9px 10px;font-family:var(--mono);font-size:13px}
+  label{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+  :focus-visible{outline:2px solid var(--wave);outline-offset:2px}
+  canvas{width:100%;height:150px;display:block;background:#000;border:1px solid var(--border);border-radius:2px}
+  .status{font-family:var(--mono);font-size:12.5px;color:var(--dim);margin-top:14px;
+    display:flex;flex-wrap:wrap;gap:6px 22px}
+  .status b{color:var(--text);font-weight:500}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(11px,1fr));gap:2px;margin-top:18px}
+  .grid i{display:block;aspect-ratio:1/1;background:var(--panel);border-radius:1px}
+  .grid i.on{background:var(--wave)}
+  .message{margin-top:20px;padding:16px 18px;border:1px solid var(--wave);border-radius:2px;
+    background:rgba(125,224,212,.06);white-space:pre-wrap;word-break:break-word}
+  .error{color:var(--bad);font-family:var(--mono);font-size:13px;margin-top:14px}
+  .note{color:var(--dim);font-size:13.5px;max-width:60ch;margin-top:22px}
+  .key-panel{border:1px solid var(--border);border-radius:2px;padding:14px 16px;margin-top:24px;background:var(--panel)}
+  .key-panel .row{margin:10px 0 0}
+  .pill{font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
+  .pill.warn{color:var(--warm);border-color:var(--warm)}
+  .pill.ok{color:var(--wave);border-color:var(--wave)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);color:var(--dim);font-size:13px;max-width:62ch}
+  code{font-family:var(--mono);font-size:.92em;color:var(--warm)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Earshot</h1>
+  <p>A short message crosses from one device to another as sound, above 16&nbsp;kHz.
+  No network, no pairing, nothing to point at. The transmitter does not know whether
+  anyone is listening and loops forever: a receiver that joins halfway still gets
+  the whole message.</p>
+</header>
+
+<div class="key-panel">
+  <div class="row" style="margin-top:0">
+    <label>Key</label>
+    <span id="keyState" class="pill warn">demo key &mdash; no security</span>
+  </div>
+  <div class="row">
+    <input type="text" id="keyHex" size="34" placeholder="32 hex chars" spellcheck="false">
+    <label>id</label>
+    <input type="text" id="keyId" size="2" value="0">
+  </div>
+  <div class="row">
+    <button class="action" id="genKey">Generate</button>
+    <button class="action" id="loadOp">Load operator.json</button>
+    <button class="action" id="saveOp">Save operator.json</button>
+    <input type="file" id="opFile" accept=".json,application/json" hidden>
+  </div>
+  <div class="row">
+    <label>next counter</label>
+    <input type="text" id="counter" size="8" value="1">
+  </div>
+  <p class="note">The repository ships only the demonstration key. Generate your own,
+  install the same key in the device firmware, and keep <code>operator.json</code> private.</p>
+</div>
+
+<nav role="tablist">
+  <button role="tab" id="t-tx" aria-selected="true">Transmit</button>
+  <button role="tab" id="t-rx" aria-selected="false">Listen</button>
+</nav>
+
+<section id="p-tx" class="active">
+  <textarea id="text" placeholder="Type here. Up to about 1500 characters.">If you can read this, it arrived as sound. No network in between.</textarea>
+  <div class="row">
+    <button class="action primary" id="tx">Start transmitting</button>
+  </div>
+  <canvas id="spectrum-tx"></canvas>
+  <div class="status" id="status-tx"></div>
+  <p class="note">Turn the volume up and hold the devices half a metre apart. The signal
+  sits between 16.4 and 18.8&nbsp;kHz: nearly inaudible to an adult, audible to children
+  and animals.</p>
+</section>
+
+<section id="p-rx">
+  <div class="row">
+    <button class="action primary" id="rx">Start listening</button>
+    <button class="action" id="reset">Start over</button>
+  </div>
+  <canvas id="spectrum-rx"></canvas>
+  <div class="status" id="status-rx"></div>
+  <div class="grid" id="grid"></div>
+  <div id="error" class="error" hidden></div>
+  <div id="message" class="message" hidden></div>
+  <p class="note">Each square is one block of the message. They light up out of order:
+  what arrives is not "block number 7", it is a combination, and the message dissolves
+  out by itself as the combinations simplify.</p>
+</section>
+
+<footer>
+  About 8 bytes per second &mdash; the real speed of the ultrasonic band on ordinary
+  phone speakers and microphones: for messages, not files. Open the microphone with
+  echo cancellation, noise suppression and automatic gain turned off; they eat exactly
+  these frequencies. Receiving needs https or localhost.
+</footer>
+</div>
+
+<script>
+/* ================= channel parameters (SPEC 3) ================= */
+const SYNC = 16400, LANE_A = 16700, LANE_B = 17900, STEP = 60, TONES = 16;
+const SYM = 0.080;                 // symbol duration, seconds
+const BLOCK = 8;                   // payload bytes per frame
+const SYMBOLS = 1 + 4 + BLOCK;     // sync + header + payload
+
+/* ================= SipHash-2-4 (SPEC 5.2) ================= */
+const M64 = (1n << 64n) - 1n;
+const rotl = (x, b) => ((x << b) | (x >> (64n - b))) & M64;
+function siphash24(key, msg){
+  const rd = (arr, o) => { let v = 0n; for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(arr[o + i]); return v; };
+  let k0 = rd(key, 0), k1 = rd(key, 8);
+  let v0 = 0x736f6d6570736575n ^ k0, v1 = 0x646f72616e646f6dn ^ k1;
+  let v2 = 0x6c7967656e657261n ^ k0, v3 = 0x7465646279746573n ^ k1;
+  const round = () => {
+    v0 = (v0 + v1) & M64; v1 = rotl(v1, 13n); v1 ^= v0; v0 = rotl(v0, 32n);
+    v2 = (v2 + v3) & M64; v3 = rotl(v3, 16n); v3 ^= v2;
+    v0 = (v0 + v3) & M64; v3 = rotl(v3, 21n); v3 ^= v0;
+    v2 = (v2 + v1) & M64; v1 = rotl(v1, 17n); v1 ^= v2; v2 = rotl(v2, 32n);
+  };
+  const n = msg.length, whole = n - (n % 8);
+  for (let i = 0; i < whole; i += 8){
+    const m = rd(msg, i);
+    v3 ^= m; round(); round(); v0 ^= m;
+  }
+  let b = BigInt(n & 0xff) << 56n;
+  for (let i = whole; i < n; i++) b |= BigInt(msg[i]) << BigInt(8 * (i - whole));
+  v3 ^= b; round(); round(); v0 ^= b;
+  v2 ^= 0xffn; round(); round(); round(); round();
+  let r = (v0 ^ v1 ^ v2 ^ v3) & M64;
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i++){ out[i] = Number(r & 0xffn); r >>= 8n; }
+  return out;
+}
+
+/* ================= fountain codec (SPEC 4) ================= */
+function prng(s){s=s>>>0;if(!s)s=0x9e3779b9;return()=>{s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function cdfSoliton(K){const c=.05,d=.05,R=c*Math.log(K/d)*Math.sqrt(K),p=new Float64Array(K+1);
+  for(let i=1;i<=K;i++)p[i]=i===1?1/K:1/(i*(i-1));
+  const kr=Math.max(1,Math.round(K/R));
+  for(let i=1;i<kr;i++)p[i]+=R/(i*K);
+  if(kr<=K)p[kr]+=R*Math.log(R/d)/K;
+  let t=0;for(let i=1;i<=K;i++)t+=p[i];
+  const cdf=new Float64Array(K+1);let a=0;
+  for(let i=1;i<=K;i++){a+=p[i]/t;cdf[i]=a;}cdf[K]=1;return cdf;}
+function degree(cdf,K,r){let lo=1,hi=K;while(lo<hi){const m=(lo+hi)>>1;if(cdf[m]<r)lo=m+1;else hi=m;}return lo;}
+function blockIndices(seed,K,cdf){const r=prng(seed),d=Math.min(K,degree(cdf,K,r()));
+  const s=new Set();while(s.size<d)s.add(Math.floor(r()*K)%K);return[...s];}
+function crc8(b){let c=0;for(const x of b){c^=x;for(let i=0;i<8;i++)c=c&0x80?((c<<1)^0x07)&0xff:(c<<1)&0xff;}return c;}
+function crc16(b){let c=0xffff;for(const x of b){c^=x<<8;for(let i=0;i<8;i++)c=c&0x8000?((c<<1)^0x1021)&0xffff:(c<<1)&0xffff;}return c;}
+
+/* ================= message envelope (SPEC 5.1) ================= */
+function buildEnvelope(data, key, keyid, counter, ver){
+  ver = ver || 1;
+  if(data.length < 1 || data.length > 255*BLOCK - 17) throw new Error('payload length out of range');
+  const signed = new Uint8Array(7 + data.length);
+  signed[0] = ((ver & 15) << 4) | (keyid & 15);
+  signed[1] = (counter >>> 24) & 255; signed[2] = (counter >>> 16) & 255;
+  signed[3] = (counter >>> 8) & 255;  signed[4] = counter & 255;
+  signed[5] = (data.length >>> 8) & 255; signed[6] = data.length & 255;
+  signed.set(data, 7);
+  const tag = siphash24(key, signed);
+  const body = new Uint8Array(signed.length + 8);
+  body.set(signed); body.set(tag, signed.length);
+  const c = crc16(body);
+  const env = new Uint8Array(body.length + 2);
+  env.set(body); env[body.length] = (c >> 8) & 255; env[body.length + 1] = c & 255;
+  return env;
+}
+function parseEnvelope(env, key){
+  if(env.length < 18) return {error:'too short'};
+  const ver = env[0] >> 4, keyid = env[0] & 15;
+  const counter = env[1]*16777216 + (env[2]<<16) + (env[3]<<8) + env[4];
+  const len = (env[5]<<8) | env[6];
+  if(7 + len + 10 > env.length) return {error:'length inconsistent with the decode'};
+  const signedLen = 7 + len;
+  const out = {ver, keyid, counter, len, data: env.slice(7, 7+len)};
+  const tag = env.slice(signedLen, signedLen+8);
+  const crcGot = (env[signedLen+8]<<8) | env[signedLen+9];
+  out.crcOk = crc16(env.slice(0, signedLen+8)) === crcGot;
+  if(ver !== 1) out.error = 'unsupported protocol version ' + ver;
+  else if(!out.crcOk) out.error = 'crc mismatch (bad reconstruction)';
+  if(key){
+    const want = siphash24(key, env.slice(0, signedLen));
+    out.tagOk = want.every((b,i)=>b===tag[i]);
+    if(out.crcOk && ver===1 && !out.tagOk) out.error = 'tag mismatch (wrong key)';
+  }
+  return out;
+}
+
+function encoder(env){
+  const K=Math.ceil(env.length/BLOCK);
+  if(K>255)throw new Error('message too long: maximum '+(255*BLOCK-17)+' bytes');
+  const cdf=cdfSoliton(K),src=[];
+  for(let i=0;i<K;i++){const b=new Uint8Array(BLOCK);b.set(env.slice(i*BLOCK,(i+1)*BLOCK));src.push(b);}
+  let n=0;
+  return{K,frame(){
+    const seed=(++n*40503)&0xffff||1;
+    const ids=blockIndices(seed,K,cdf),p=new Uint8Array(BLOCK);
+    for(const i of ids){const s=src[i];for(let j=0;j<BLOCK;j++)p[j]^=s[j];}
+    const f=new Uint8Array(4+BLOCK);
+    f[0]=K;f[1]=seed&0xff;f[2]=seed>>8;f.set(p,4);
+    f[3]=crc8([f[0],f[1],f[2],...p]);
+    return f;}};}
+
+function decoder(){
+  let K=0,cdf=null,n=0,seen=0;const sol=[],held=[];
+  return{
+    get K(){return K;},get n(){return n;},get seen(){return seen;},
+    get done(){return K>0&&n===K;},sol,
+    push(f){
+      const k=f[0],seed=f[1]|(f[2]<<8);
+      if(!k||crc8([f[0],f[1],f[2],...f.slice(4)])!==f[3])return false;
+      if(!K){K=k;cdf=cdfSoliton(K);sol.length=K;}
+      if(k!==K)return false;
+      seen++;
+      let ids=blockIndices(seed,K,cdf),d=f.slice(4);
+      ids=ids.filter(i=>{if(sol[i]){for(let j=0;j<BLOCK;j++)d[j]^=sol[i][j];return false;}return true;});
+      const q=[];
+      if(ids.length===1)q.push([ids[0],d]);else if(ids.length>1)held.push({ids,d});
+      while(q.length){const[i,v]=q.shift();if(sol[i])continue;sol[i]=v;n++;
+        for(let p=held.length-1;p>=0;p--){const b=held[p];
+          if(b.ids.indexOf(i)<0)continue;
+          for(let j=0;j<BLOCK;j++)b.d[j]^=v[j];
+          b.ids=b.ids.filter(x=>x!==i);
+          if(b.ids.length===1){q.push([b.ids[0],b.d]);held.splice(p,1);}
+          else if(!b.ids.length)held.splice(p,1);}}
+      return true;},
+    assemble(){const o=new Uint8Array(K*BLOCK);for(let i=0;i<K;i++)o.set(sol[i],i*BLOCK);return o;}};}
+
+/* ================= key panel ================= */
+const $=i=>document.getElementById(i);
+const DEMO_KEY = '00112233445566778899aabbccddeeff';   // matches tools/ and tests/ - NOT secret
+const enc = new TextEncoder(), dec = new TextDecoder();
+const hexToBytes = h => { const a = new Uint8Array(16); for (let i=0;i<16;i++) a[i]=parseInt(h.substr(2*i,2),16); return a; };
+const bytesToHex = a => [...a].map(b=>b.toString(16).padStart(2,'0')).join('');
+
+$('keyHex').value = DEMO_KEY;
+function currentKey(){
+  const h = $('keyHex').value.trim().toLowerCase();
+  if(!/^[0-9a-f]{32}$/.test(h)){ throw new Error('key must be 32 hex characters'); }
+  return {bytes: hexToBytes(h), keyid: (parseInt($('keyId').value,10)||0) & 15, hex:h};
+}
+function refreshKeyState(){
+  const el = $('keyState');
+  let h; try { h = currentKey().hex; } catch(e){ el.className='pill bad'; el.textContent=e.message; return; }
+  if(h === DEMO_KEY){ el.className='pill warn'; el.textContent='demo key — no security'; }
+  else { el.className='pill ok'; el.textContent='custom key'; }
+}
+['keyHex','keyId'].forEach(id=>$(id).addEventListener('input',refreshKeyState));
+refreshKeyState();
+
+$('genKey').onclick=()=>{
+  const a=new Uint8Array(16); crypto.getRandomValues(a);
+  $('keyHex').value=bytesToHex(a); $('counter').value='1'; refreshKeyState();
+};
+$('loadOp').onclick=()=>$('opFile').click();
+$('opFile').onchange=async e=>{
+  const file=e.target.files[0]; if(!file)return;
+  try{
+    const op=JSON.parse(await file.text());
+    if(op.key) $('keyHex').value=String(op.key).toLowerCase();
+    if(op.keyid!=null) $('keyId').value=op.keyid;
+    if(op.counter!=null) $('counter').value=(parseInt(op.counter,10)||0)+1;
+    refreshKeyState();
+  }catch(err){ alert('cannot read operator file: '+err.message); }
+};
+$('saveOp').onclick=()=>{
+  let k; try{ k=currentKey(); }catch(err){ alert(err.message); return; }
+  const op={version:1,keyid:k.keyid,key:k.hex,counter:(parseInt($('counter').value,10)||1)-1};
+  const blob=new Blob([JSON.stringify(op,null,2)+'\n'],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='operator.json'; a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+/* ================= tabs ================= */
+[['t-tx','p-tx'],['t-rx','p-rx']].forEach(([t])=>$(t).onclick=()=>{
+  [['t-tx','p-tx'],['t-rx','p-rx']].forEach(([t2,p2])=>{const on=t2===t;
+    $(t2).setAttribute('aria-selected',on);$(p2).classList.toggle('active',on);});});
+
+function tone(lane,i){return (lane?LANE_B:LANE_A)+i*STEP;}
+
+/* ================= transmit ================= */
+let actx=null,txOn=false,txEnc=null,txTimer=null,txSent=0,analyserTx=null;
+function ctx(){return actx||(actx=new (window.AudioContext||window.webkitAudioContext)());}
+
+function playFrame(frame,t0){
+  const a=ctx();
+  const symbols=[[SYNC]];
+  for(const b of frame)symbols.push([tone(0,b&15),tone(1,b>>4)]);
+  symbols.forEach((fs,k)=>{
+    const t=t0+k*SYM;
+    for(const f of fs){
+      const o=a.createOscillator(),g=a.createGain();
+      o.frequency.value=f;o.type='sine';
+      g.gain.setValueAtTime(0,t);
+      g.gain.linearRampToValueAtTime(.5/fs.length,t+.006);
+      g.gain.setValueAtTime(.5/fs.length,t+SYM-.006);
+      g.gain.linearRampToValueAtTime(0,t+SYM);
+      o.connect(g);g.connect(analyserTx);g.connect(a.destination);
+      o.start(t);o.stop(t+SYM+.01);}});
+  return t0+symbols.length*SYM;
+}
+$('tx').onclick=async()=>{
+  if(txOn){txOn=false;clearInterval(txTimer);$('tx').textContent='Start transmitting';return;}
+  const a=ctx();await a.resume();
+  if(!analyserTx){analyserTx=a.createAnalyser();analyserTx.fftSize=2048;analyserTx.smoothingTimeConstant=0;}
+  let env;
+  try{
+    const k=currentKey();
+    const counter=parseInt($('counter').value,10)||1;
+    env=buildEnvelope(enc.encode($('text').value),k.bytes,k.keyid,counter);
+    txEnc=encoder(env);
+  }catch(e){$('status-tx').textContent=e.message;return;}
+  txSent=0;txOn=true;$('tx').textContent='Stop transmitting';
+  let next=a.currentTime+.2;
+  const perFrame=SYMBOLS*SYM;
+  const step=()=>{
+    while(next<a.currentTime+.5){next=playFrame(txEnc.frame(),next);txSent++;}
+    $('status-tx').innerHTML=`blocks K=<b>${txEnc.K}</b> · frames <b>${txSent}</b> · `+
+      `redundancy <b>${(txSent/txEnc.K).toFixed(2)}×</b> · <b>${(BLOCK/perFrame).toFixed(1)}</b> B/s`;
+  };
+  step();txTimer=setInterval(step,200);
+  draw($('spectrum-tx'),analyserTx);
+};
+
+/* ================= receive ================= */
+let rxOn=false,rxDec=null,stream=null,analyserRx=null,cells=[];
+function reset(){rxDec=decoder();cells=[];$('grid').innerHTML='';
+  $('message').hidden=true;$('error').hidden=true;$('status-rx').textContent='';}
+$('reset').onclick=reset;
+
+$('rx').onclick=async()=>{
+  if(rxOn){rxOn=false;stream&&stream.getTracks().forEach(t=>t.stop());stream=null;
+    $('rx').textContent='Start listening';return;}
+  reset();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{
+      echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}});
+  }catch(e){$('error').hidden=false;
+    $('error').textContent='Microphone unavailable ('+e.name+'). Needs https or localhost.';return;}
+  const a=ctx();await a.resume();
+  analyserRx=a.createAnalyser();analyserRx.fftSize=2048;analyserRx.smoothingTimeConstant=0;
+  a.createMediaStreamSource(stream).connect(analyserRx);
+  rxOn=true;$('rx').textContent='Stop listening';
+  listen();draw($('spectrum-rx'),analyserRx);
+};
+
+function listen(){
+  const buf=new Float32Array(analyserRx.frequencyBinCount);
+  const hz=ctx().sampleRate/analyserRx.fftSize;
+  const bin=f=>Math.round(f/hz);
+  const mag=f=>{const b=bin(f);return Math.max(buf[b-1],buf[b],buf[b+1]);};
+  let state='seek',t0=0,slot=-1,acc=null,bytes=[];
+
+  const tick=()=>{
+    if(!rxOn)return;
+    analyserRx.getFloatFrequencyData(buf);
+    const now=performance.now()/1000;
+
+    let sum=0,n=0;
+    for(let f=LANE_A;f<=LANE_B+15*STEP;f+=STEP){sum+=mag(f);n++;}
+    const floor=sum/n;
+
+    if(state==='seek'){
+      if(mag(SYNC)>floor+9){state='frame';t0=now;slot=0;acc=null;bytes=[];}
+    }else{
+      const s=Math.floor((now-t0)/SYM);
+      if(s>slot){
+        if(acc&&slot>=1&&slot<=SYMBOLS-1)bytes.push(decodeByte(acc));
+        acc=null;slot=s;
+        if(slot>=SYMBOLS){
+          if(bytes.length===4+BLOCK&&bytes.every(b=>b>=0)){
+            if(rxDec.push(Uint8Array.from(bytes)))update();
+          }
+          state='seek';
+        }
+      }
+      if(slot>=1&&slot<SYMBOLS){
+        const phase=(now-t0)/SYM-slot;
+        if(phase>.25&&phase<.8){
+          if(!acc)acc={a:new Float32Array(TONES),b:new Float32Array(TONES),n:0,floor:0};
+          for(let i=0;i<TONES;i++){acc.a[i]+=mag(tone(0,i));acc.b[i]+=mag(tone(1,i));}
+          acc.floor+=floor;acc.n++;
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  };
+  const argmax=(v,n,fl)=>{
+    let i1=0,m1=-1e9,m2=-1e9;
+    for(let i=0;i<TONES;i++){const x=v[i]/n;if(x>m1){m2=m1;m1=x;i1=i;}else if(x>m2)m2=x;}
+    return (m1>fl/n+7&&m1>m2+4)?i1:-1;
+  };
+  const decodeByte=a=>{
+    const lo=argmax(a.a,a.n,a.floor),hi=argmax(a.b,a.n,a.floor);
+    return lo<0||hi<0?-1:lo|(hi<<4);
+  };
+  tick();
+}
+
+function update(){
+  if(cells.length!==rxDec.K){$('grid').innerHTML='';cells=[];
+    for(let i=0;i<rxDec.K;i++){const e=document.createElement('i');$('grid').appendChild(e);cells.push(e);}}
+  for(let i=0;i<rxDec.K;i++)if(rxDec.sol[i])cells[i].classList.add('on');
+  $('status-rx').innerHTML=`blocks <b>${rxDec.n}/${rxDec.K}</b> · frames <b>${rxDec.seen}</b> · `+
+    `redundancy <b>${(rxDec.seen/rxDec.K).toFixed(2)}×</b>`;
+  if(rxDec.done){
+    let key=null; try{ key=currentKey().bytes; }catch(e){}
+    const p=parseEnvelope(rxDec.assemble(),key);
+    if(p.error){$('error').hidden=false;$('error').textContent=p.error;return;}
+    $('message').hidden=false;
+    const auth = p.tagOk===true ? 'authenticated' : (p.tagOk===false ? 'NOT authenticated' : 'tag not checked (load the key)');
+    $('message').textContent =
+      `ver ${p.ver} · keyid ${p.keyid} · counter ${p.counter} · ${p.len} bytes · ${auth}\n\n`+
+      dec.decode(p.data);
+  }
+}
+
+/* ================= spectrum ================= */
+function draw(cv,an){
+  const g=cv.getContext('2d');
+  const buf=new Float32Array(an.frequencyBinCount);
+  const hz=()=>ctx().sampleRate/an.fftSize;
+  const loop=()=>{
+    const w=cv.width=cv.clientWidth*2,h=cv.height=300;
+    an.getFloatFrequencyData(buf);
+    g.fillStyle='#000';g.fillRect(0,0,w,h);
+    const f0=16000,f1=19200,b0=Math.floor(f0/hz()),b1=Math.ceil(f1/hz());
+    for(let b=b0;b<=b1;b++){
+      const x=(b-b0)/(b1-b0)*w,v=Math.max(0,Math.min(1,(buf[b]+100)/70));
+      g.fillStyle=b===Math.round(SYNC/hz())?'#e0a05a':'#7de0d4';
+      g.globalAlpha=v;g.fillRect(x,h-v*h,w/(b1-b0)+1,v*h);
+    }
+    g.globalAlpha=1;g.fillStyle='#807b92';g.font='20px ui-monospace,monospace';
+    g.fillText('16 kHz',6,h-8);g.fillText('19.2 kHz',w-120,h-8);
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+</script>
+</body>
+</html>

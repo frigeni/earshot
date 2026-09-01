@@ -45,13 +45,26 @@ message.
 
 | path | contents |
 |------|----------|
-| `spec/`     | protocol specification — the source of truth |
-| `include/`  | `earshot.h`, the public C API |
-| `src/`      | portable C receiver |
-| `web/`      | self-contained transmitter + receiver web page |
-| `tools/`    | waveform generator, key generator, single-header amalgamation |
-| `tests/`    | unit vectors and end-to-end bench, run in CI |
-| `examples/` | hardware integration (STM32) |
+| `spec/`      | protocol specification — the source of truth (`SPEC.md`, `PROFILE-A.md`) |
+| `include/`   | `earshot.h` (receiver API), `earshot_tx.h` (device transmitter, Profile A — stub) |
+| `src/`       | portable C receiver; `src/tx/` is the device-side transmitter (Profile A — stub) |
+| `web/`       | self-contained transmitter + receiver web page |
+| `tools/`     | waveform generator, key generator, single-header amalgamation |
+| `tests/`     | unit vectors and end-to-end bench, run in CI |
+| `examples/`  | hardware integration (`stm32/` receiver, `buzzer/` transmitter) |
+
+The **inbound** direction (config in, Profile N) is implemented. The **outbound**
+direction (diagnostics out over a piezo buzzer, Profile A) is the second half of
+the project and is specified but not yet built — see `spec/PROFILE-A.md`.
+
+## Build
+
+```
+make            # libearshot.a, the CLI decoder, the unit tests
+make test       # unit tests + end-to-end bench (needs python3)
+```
+
+`tools/earshot_tx.py` synthesises a signed waveform; `tests/decode` recovers it.
 
 ## Security
 
