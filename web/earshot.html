@@ -107,6 +107,11 @@
 
 <section id="p-rx">
   <div class="row">
+    <label>Listen for</label>
+    <label><input type="radio" name="prof" value="N" checked> config &nbsp;16.4&ndash;18.8&nbsp;kHz</label>
+    <label><input type="radio" name="prof" value="A"> diagnostics &nbsp;2.3&ndash;4.1&nbsp;kHz</label>
+  </div>
+  <div class="row">
     <button class="action primary" id="rx">Start listening</button>
     <button class="action" id="reset">Start over</button>
   </div>
@@ -305,6 +310,15 @@ $('saveOp').onclick=()=>{
   URL.revokeObjectURL(a.href);
 };
 
+/* ================= profiles ================= */
+const PROFILE_N = { name:'N', sync:16400, laneBase:[16700,17900], step:60, tones:16,
+                    lanes:2, sym:0.080, syms:13, sampleLo:0.25, sampleHi:0.80 };
+const PROFILE_A = { name:'A', sync:2300, laneBase:[2600], step:100, tones:16,
+                    lanes:1, sym:0.060, syms:25, sampleLo:0.34, sampleHi:0.62 };
+function chosenProfile(){
+  return document.querySelector('input[name=prof]:checked').value === 'A' ? PROFILE_A : PROFILE_N;
+}
+
 /* ================= tabs ================= */
 [['t-tx','p-tx'],['t-rx','p-rx']].forEach(([t])=>$(t).onclick=()=>{
   [['t-tx','p-tx'],['t-rx','p-rx']].forEach(([t2,p2])=>{const on=t2===t;
@@ -375,15 +389,39 @@ $('rx').onclick=async()=>{
   analyserRx=a.createAnalyser();analyserRx.fftSize=2048;analyserRx.smoothingTimeConstant=0;
   a.createMediaStreamSource(stream).connect(analyserRx);
   rxOn=true;$('rx').textContent='Stop listening';
-  listen();draw($('spectrum-rx'),analyserRx);
+  const P=chosenProfile();
+  listen();
+  draw($('spectrum-rx'),analyserRx, P.name==='A'?[1800,5000]:[16000,19200]);
 };
 
 function listen(){
+  const P=chosenProfile();
   const buf=new Float32Array(analyserRx.frequencyBinCount);
   const hz=ctx().sampleRate/analyserRx.fftSize;
   const bin=f=>Math.round(f/hz);
   const mag=f=>{const b=bin(f);return Math.max(buf[b-1],buf[b],buf[b+1]);};
-  let state='seek',t0=0,slot=-1,acc=null,bytes=[];
+  const toneHz=(l,i)=>P.laneBase[l]+i*P.step;
+
+  let state='seek',t0=0,slot=-1,acc=null,nibbles=[],frameBad=false;
+
+  const argmax=(v,n,fl)=>{
+    let i1=0,m1=-1e9,m2=-1e9;
+    for(let i=0;i<P.tones;i++){const x=v[i]/n;if(x>m1){m2=m1;m1=x;i1=i;}else if(x>m2)m2=x;}
+    return (m1>fl/n+7&&m1>m2+4)?i1:-1;
+  };
+  const decodeSymbol=a=>{
+    const out=[];
+    for(let l=0;l<P.lanes;l++){const v=argmax(a.lane[l],a.n,a.floor);if(v<0)return null;out.push(v);}
+    return out;
+  };
+  const finishFrame=()=>{
+    if(!frameBad&&nibbles.length===24){
+      const f=new Uint8Array(12);
+      for(let b=0;b<12;b++)f[b]=nibbles[2*b]|(nibbles[2*b+1]<<4);
+      if(rxDec.push(f))update();
+    }
+    state='seek';
+  };
 
   const tick=()=>{
     if(!rxOn)return;
@@ -391,42 +429,31 @@ function listen(){
     const now=performance.now()/1000;
 
     let sum=0,n=0;
-    for(let f=LANE_A;f<=LANE_B+15*STEP;f+=STEP){sum+=mag(f);n++;}
+    for(let l=0;l<P.lanes;l++)for(let i=0;i<P.tones;i++){sum+=mag(toneHz(l,i));n++;}
     const floor=sum/n;
 
     if(state==='seek'){
-      if(mag(SYNC)>floor+9){state='frame';t0=now;slot=0;acc=null;bytes=[];}
+      if(mag(P.sync)>floor+9){state='frame';t0=now;slot=0;acc=null;nibbles=[];frameBad=false;}
     }else{
-      const s=Math.floor((now-t0)/SYM);
+      const s=Math.floor((now-t0)/P.sym);
       if(s>slot){
-        if(acc&&slot>=1&&slot<=SYMBOLS-1)bytes.push(decodeByte(acc));
-        acc=null;slot=s;
-        if(slot>=SYMBOLS){
-          if(bytes.length===4+BLOCK&&bytes.every(b=>b>=0)){
-            if(rxDec.push(Uint8Array.from(bytes)))update();
-          }
-          state='seek';
+        if(acc&&slot>=1&&slot<=P.syms-1){
+          const nib=decodeSymbol(acc);
+          if(nib)nibbles.push(...nib);else frameBad=true;
         }
+        acc=null;slot=s;
+        if(slot>=P.syms){finishFrame();}
       }
-      if(slot>=1&&slot<SYMBOLS){
-        const phase=(now-t0)/SYM-slot;
-        if(phase>.25&&phase<.8){
-          if(!acc)acc={a:new Float32Array(TONES),b:new Float32Array(TONES),n:0,floor:0};
-          for(let i=0;i<TONES;i++){acc.a[i]+=mag(tone(0,i));acc.b[i]+=mag(tone(1,i));}
+      if(slot>=1&&slot<P.syms){
+        const phase=(now-t0)/P.sym-slot;
+        if(phase>P.sampleLo&&phase<P.sampleHi){
+          if(!acc){acc={lane:[],n:0,floor:0};for(let l=0;l<P.lanes;l++)acc.lane.push(new Float32Array(P.tones));}
+          for(let l=0;l<P.lanes;l++)for(let i=0;i<P.tones;i++)acc.lane[l][i]+=mag(toneHz(l,i));
           acc.floor+=floor;acc.n++;
         }
       }
     }
     requestAnimationFrame(tick);
-  };
-  const argmax=(v,n,fl)=>{
-    let i1=0,m1=-1e9,m2=-1e9;
-    for(let i=0;i<TONES;i++){const x=v[i]/n;if(x>m1){m2=m1;m1=x;i1=i;}else if(x>m2)m2=x;}
-    return (m1>fl/n+7&&m1>m2+4)?i1:-1;
-  };
-  const decodeByte=a=>{
-    const lo=argmax(a.a,a.n,a.floor),hi=argmax(a.b,a.n,a.floor);
-    return lo<0||hi<0?-1:lo|(hi<<4);
   };
   tick();
 }
@@ -450,7 +477,9 @@ function update(){
 }
 
 /* ================= spectrum ================= */
-function draw(cv,an){
+function draw(cv,an,band){
+  const [f0,f1]=band||[16000,19200];
+  const syncHz = f0<10000 ? PROFILE_A.sync : SYNC;
   const g=cv.getContext('2d');
   const buf=new Float32Array(an.frequencyBinCount);
   const hz=()=>ctx().sampleRate/an.fftSize;
@@ -458,14 +487,14 @@ function draw(cv,an){
     const w=cv.width=cv.clientWidth*2,h=cv.height=300;
     an.getFloatFrequencyData(buf);
     g.fillStyle='#000';g.fillRect(0,0,w,h);
-    const f0=16000,f1=19200,b0=Math.floor(f0/hz()),b1=Math.ceil(f1/hz());
+    const b0=Math.floor(f0/hz()),b1=Math.ceil(f1/hz());
     for(let b=b0;b<=b1;b++){
       const x=(b-b0)/(b1-b0)*w,v=Math.max(0,Math.min(1,(buf[b]+100)/70));
-      g.fillStyle=b===Math.round(SYNC/hz())?'#e0a05a':'#7de0d4';
+      g.fillStyle=b===Math.round(syncHz/hz())?'#e0a05a':'#7de0d4';
       g.globalAlpha=v;g.fillRect(x,h-v*h,w/(b1-b0)+1,v*h);
     }
     g.globalAlpha=1;g.fillStyle='#807b92';g.font='20px ui-monospace,monospace';
-    g.fillText('16 kHz',6,h-8);g.fillText('19.2 kHz',w-120,h-8);
+    g.fillText((f0/1000)+' kHz',6,h-8);g.fillText((f1/1000)+' kHz',w-120,h-8);
     requestAnimationFrame(loop);
   };
   loop();

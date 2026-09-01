@@ -34,6 +34,9 @@ jobs:
           ${{ matrix.cc }} -c -O2 -std=c99 -Wall -Wextra -Werror -I. amalg.c -o amalg.o
           rm -f amalg.c amalg.o earshot_single.h
 
+      - name: soliton table is bit-exact with the float decoder
+        run: python3 tools/soliton_table.py --check-only --kmax 12
+
   embedded:
     runs-on: ubuntu-latest
     steps:
@@ -46,5 +49,10 @@ jobs:
             -mcpu=cortex-m4 -mthumb -Iinclude -Isrc \
             -DEARSHOT_MAX_BLOCKS=64 \
             src/earshot.c src/fountain.c src/envelope.c src/siphash.c src/crc.c
+      - name: compile the device transmitter for Cortex-M0+
+        run: |
+          arm-none-eabi-gcc -c -Os -std=c99 -Wall -Wextra -Werror \
+            -mcpu=cortex-m0plus -mthumb -Iinclude -Isrc/tx \
+            -o earshot_tx.o src/tx/earshot_tx.c
       - name: report size
         run: arm-none-eabi-size *.o

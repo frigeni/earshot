@@ -53,9 +53,10 @@ message.
 | `tests/`     | unit vectors and end-to-end bench, run in CI |
 | `examples/`  | hardware integration (`stm32/` receiver, `buzzer/` transmitter) |
 
-The **inbound** direction (config in, Profile N) is implemented. The **outbound**
-direction (diagnostics out over a piezo buzzer, Profile A) is the second half of
-the project and is specified but not yet built — see `spec/PROFILE-A.md`.
+Both directions are implemented. **Config in** (Profile N, near-ultrasonic,
+phone → device) and **diagnostics out** (Profile A, audible, device → phone over
+a piezo buzzer — `spec/PROFILE-A.md`). The device transmitter in `src/tx/` is
+integer-only: no libm, no floating point, one GPIO pin.
 
 ## Build
 

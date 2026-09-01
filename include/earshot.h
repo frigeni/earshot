@@ -121,11 +121,40 @@ typedef struct earshot earshot_t;
 size_t earshot_sizeof(void);
 
 
+/* -------------------------------------------------------------------- profile */
+/*
+ * A profile fixes the frequency plan, tone count and symbol timing. The profile
+ * in use is identified on air by its sync frequency, so the same receiver can
+ * tell Profile N from Profile A. See spec/PROFILE-A.md.
+ */
+typedef struct {
+    uint16_t sync_hz;
+    uint16_t lane_hz[2];    /* base frequency of each lane; [1] unused if lanes == 1 */
+    uint16_t step_hz;
+    uint8_t  tones;         /* tones per lane (M) */
+    uint8_t  lanes;         /* 1 = MFSK (Profile A), 2 = dual lane (Profile N) */
+    uint8_t  sub_per_symbol;/* 20 ms Goertzel sub-blocks in one symbol */
+    uint8_t  sample_first;  /* first sub-block of the symbol to integrate over */
+    uint8_t  sample_last;   /* last sub-block to integrate over (inclusive) */
+    uint8_t  data_symbols;  /* symbols after the sync symbol (24 nibbles = 12 bytes) */
+} earshot_profile_t;
+
+/* Profile N: near-ultrasonic 16.4-18.8 kHz, dual lane, one byte per symbol. */
+extern const earshot_profile_t EARSHOT_PROFILE_N;
+
+/* Profile A: audible 2.3-4.1 kHz, single-lane MFSK, one nibble per symbol. */
+extern const earshot_profile_t EARSHOT_PROFILE_A;
+
+
 /* --------------------------------------------------------------------- api - */
 
 /* Initialise for Profile N (near-ultrasonic inbound, SPEC 3.3). `hooks` is
  * borrowed and must outlive `e`. Resets the presence window to now. */
 void earshot_init(earshot_t *e, const earshot_hooks *hooks);
+
+/* Initialise for an explicit profile. `profile` is copied, need not outlive e. */
+void earshot_init_profile(earshot_t *e, const earshot_hooks *hooks,
+                          const earshot_profile_t *profile);
 
 /* Feed 48 kHz mono int16 PCM. Returns the current status. When it returns
  * EARSHOT_MESSAGE, stop feeding and call earshot_take(). When it returns

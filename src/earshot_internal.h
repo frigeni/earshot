@@ -14,17 +14,15 @@
 /* ---- channel constants (SPEC 3, 4) --------------------------------------- */
 
 #define ESH_SR            48000
-#define ESH_SUBBLOCK      960          /* 20 ms                              */
-#define ESH_SUB_PER_SYM   4            /* sub-blocks per 80 ms symbol        */
-#define ESH_SYMS_PER_FRM  13           /* 1 sync + 12 data                   */
+#define ESH_SUBBLOCK      960          /* 20 ms Goertzel window              */
 #define ESH_FRAME_BYTES   12           /* K, seed_lo, seed_hi, crc8, 8 pay   */
 #define ESH_PAY           8            /* fountain block size                */
-#define ESH_TONES         16           /* tones per lane                     */
-
-#define ESH_F_SYNC        16400.0f
-#define ESH_F_LANE_A      16700.0f     /* low nibble                         */
-#define ESH_F_LANE_B      17900.0f     /* high nibble                        */
-#define ESH_F_STEP        60.0f
+#define ESH_MAX_TONES     16           /* tones per lane, any profile        */
+#define ESH_MAX_LANES     2
+#define ESH_MAX_BINS      (1 + ESH_MAX_LANES * ESH_MAX_TONES)   /* 33 */
+#define ESH_MAX_SUB_PER_SYM 4
+#define ESH_MAX_DATA_SYMS 24           /* 24 nibbles = 12 bytes (Profile A)  */
+#define ESH_MAX_SYMS_PER_FRM (1 + ESH_MAX_DATA_SYMS)
 
 /* detection thresholds, dB (SPEC 3.5) */
 #define ESH_SYNC_DB       9.0f

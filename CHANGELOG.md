@@ -9,6 +9,17 @@ All notable changes to Earshot are recorded here. The protocol version is the
 - Protocol specification `spec/SPEC.md` (draft, protocol `ver = 1`).
 - Repository structure: portable C receiver, web transmitter, Python tools,
   CI-run tests, STM32 example.
+- **Profile A** — the audible device→phone return channel (`spec/PROFILE-A.md`).
+  Single-lane MFSK 2.3–4.1 kHz, `2·f_min > f_max` so no square-wave harmonic
+  can land on a tone. `earshot_profile_t` and single-lane decode in the C
+  receiver; `include/earshot_tx.h` + `src/tx/earshot_tx.c`, an integer-only
+  device transmitter (no libm, no floating point) that drives one GPIO pin.
+- `tools/soliton_table.py` generates `src/tx/soliton_table.h`, a fixed-point
+  robust-soliton CDF verified bit-exact against the float decoder over all
+  65536 seeds for every K.
+- `tools/earshot_tx.py` gains square-wave synthesis, a Schroeder reverberator
+  and duty-cycle-error modelling; `tests/emit` drives the device transmitter;
+  the end-to-end bench covers Profile A under harmonics, reverb and noise.
 
 ### Changed (from the pre-release `ultra` prototype)
 - Renamed project and identifier prefix `ultra` → `earshot`.

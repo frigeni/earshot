@@ -54,6 +54,7 @@ static void parse_hex(const char *h, uint8_t *out, int n)
 int main(int argc, char **argv)
 {
     const char *path = NULL;
+    const earshot_profile_t *profile = &EARSHOT_PROFILE_N;
     parse_hex("00112233445566778899aabbccddeeff", g_key, EARSHOT_KEY_BYTES);
 
     for (int i = 1; i < argc; i++) {
@@ -61,6 +62,9 @@ int main(int argc, char **argv)
             parse_hex(argv[++i], g_key, EARSHOT_KEY_BYTES);
         else if (!strcmp(argv[i], "--counter") && i + 1 < argc)
             g_counter = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--profile") && i + 1 < argc)
+            profile = (argv[++i][0] == 'a' || argv[i][0] == 'A')
+                        ? &EARSHOT_PROFILE_A : &EARSHOT_PROFILE_N;
         else if (!strcmp(argv[i], "--no-button"))
             g_button = 0;
         else if (!strcmp(argv[i], "--locked")) {
@@ -86,7 +90,7 @@ int main(int argc, char **argv)
 
     earshot_t *e = malloc(earshot_sizeof());
     if (!e) { fprintf(stderr, "oom\n"); return 2; }
-    earshot_init(e, &hooks);
+    earshot_init_profile(e, &hooks, profile);
 
     int16_t buf[4096];
     size_t n;

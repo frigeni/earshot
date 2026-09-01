@@ -314,9 +314,9 @@ The frame has no spare bits for a profile field.
 
 - **Profile N** (this document): near-ultrasonic 16.4–18.8 kHz, inbound
   (phone → device).
-- **Profile A**: audible, designed around a piezo buzzer's 2–4 kHz resonance,
-  for the outbound direction (device → phone). Specified in a later revision
-  together with the return channel.
+- **Profile A**: audible, single-lane MFSK around a piezo buzzer's 2–4 kHz
+  resonance, for the outbound direction (device → phone). Specified in
+  `PROFILE-A.md`.
 
 ---
 

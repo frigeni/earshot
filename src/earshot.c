@@ -1,13 +1,16 @@
 /*
- * earshot.c - receiver front end and public API (SPEC 3, 5).
+ * earshot.c - receiver front end and public API (SPEC 3, 5; spec/PROFILE-A.md).
  *
- * Consumes 48 kHz mono PCM, runs a 33-bin Goertzel on each 20 ms sub-block,
+ * Consumes 48 kHz mono PCM, runs a Goertzel bank on each 20 ms sub-block,
  * recovers the sync and the 12 data bytes of each frame, feeds frames to the
  * fountain decoder, and when the message is complete parses and authenticates
  * the envelope.
  *
- * Ported from the pre-release `ultra_rx.c`; the DSP path is unchanged in
- * behaviour, translated to English, split from the codec and the crypto.
+ * One symbol carries `lanes` nibbles: two for Profile N (a byte per symbol),
+ * one for Profile A (single-lane MFSK). Either way a frame is 24 nibbles.
+ *
+ * Ported from the pre-release `ultra_rx.c`; the DSP behaviour is unchanged for
+ * Profile N, generalised to an explicit profile and translated to English.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,13 +22,20 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#define ESH_BINS (1 + 2 * ESH_TONES)   /* sync + lane A + lane B = 33 */
+const earshot_profile_t EARSHOT_PROFILE_N = {
+    16400, { 16700, 17900 }, 60, 16, 2, 4, 1, 2, 12
+};
+const earshot_profile_t EARSHOT_PROFILE_A = {
+    2300, { 2600, 0 }, 100, 16, 1, 3, 1, 1, 24
+};
 
 struct earshot {
     const earshot_hooks *hooks;
+    earshot_profile_t   p;
     uint64_t samples;                  /* since init, for the presence window */
 
-    float    coeff[ESH_BINS];          /* Goertzel coefficients (constant)    */
+    int      bins;                     /* 1 + lanes * tones                   */
+    float    coeff[ESH_MAX_BINS];
 
     float    buf[ESH_SUBBLOCK];
     int      buf_n;
@@ -33,12 +43,11 @@ struct earshot {
     int      locked_on;                /* 0 = seeking sync, 1 = reading frame  */
     int      sync_prev;                /* sync tone over threshold last sub-block */
     int      sub;                      /* sub-block index within the frame     */
-    float    acc_a[ESH_TONES];
-    float    acc_b[ESH_TONES];
+    float    acc[ESH_MAX_LANES][ESH_MAX_TONES];
     float    acc_floor;
     int      acc_n;
     uint8_t  frame[ESH_FRAME_BYTES];
-    int      frame_n;
+    int      nibble_n;                 /* nibbles collected this frame (0..24) */
     int      frame_bad;
 
     esh_fountain fnt;
@@ -55,37 +64,43 @@ size_t earshot_sizeof(void) { return sizeof(struct earshot); }
 
 /* ---- DSP -------------------------------------------------------------- */
 
+static float bin_coeff(float hz)
+{
+    return 2.0f * cosf(2.0f * (float)M_PI * hz / (float)ESH_SR);
+}
+
 static void prepare_goertzel(struct earshot *e)
 {
-    e->coeff[0] = 2.0f * cosf(2.0f * (float)M_PI * ESH_F_SYNC / ESH_SR);
-    for (int i = 0; i < ESH_TONES; i++) {
-        e->coeff[1 + i] =
-            2.0f * cosf(2.0f * (float)M_PI * (ESH_F_LANE_A + ESH_F_STEP * i) / ESH_SR);
-        e->coeff[1 + ESH_TONES + i] =
-            2.0f * cosf(2.0f * (float)M_PI * (ESH_F_LANE_B + ESH_F_STEP * i) / ESH_SR);
-    }
+    const earshot_profile_t *p = &e->p;
+    e->bins = 1 + p->lanes * p->tones;
+    e->coeff[0] = bin_coeff((float)p->sync_hz);
+    for (int l = 0; l < p->lanes; l++)
+        for (int i = 0; i < p->tones; i++)
+            e->coeff[1 + l * p->tones + i] =
+                bin_coeff((float)(p->lane_hz[l] + p->step_hz * i));
 }
 
 static void goertzel(const struct earshot *e, const float *x, int n, float *db)
 {
-    for (int t = 0; t < ESH_BINS; t++) {
+    for (int t = 0; t < e->bins; t++) {
         float c = e->coeff[t], s1 = 0, s2 = 0;
         for (int i = 0; i < n; i++) {
             float s0 = x[i] + c * s1 - s2;
             s2 = s1;
             s1 = s0;
         }
-        float p = s1 * s1 + s2 * s2 - c * s1 * s2;
-        db[t] = 10.0f * log10f(p + 1e-12f);
+        float pw = s1 * s1 + s2 * s2 - c * s1 * s2;
+        db[t] = 10.0f * log10f(pw + 1e-12f);
     }
 }
 
-/* Strongest lane bin, or -1 if the choice is not clean. */
-static int lane_argmax(const float *v, int n, float floor_sum)
+/* Strongest tone of one lane, or -1 if the choice is not clean. */
+static int lane_argmax(const struct earshot *e, int lane, int n, float floor_sum)
 {
+    const float *v = e->acc[lane];
     int best = 0;
     float m1 = -1e9f, m2 = -1e9f;
-    for (int i = 0; i < ESH_TONES; i++) {
+    for (int i = 0; i < e->p.tones; i++) {
         float x = v[i] / n;
         if (x > m1)      { m2 = m1; m1 = x; best = i; }
         else if (x > m2) { m2 = x; }
@@ -97,8 +112,7 @@ static int lane_argmax(const float *v, int n, float floor_sum)
 
 static void clear_accum(struct earshot *e)
 {
-    memset(e->acc_a, 0, sizeof e->acc_a);
-    memset(e->acc_b, 0, sizeof e->acc_b);
+    memset(e->acc, 0, sizeof e->acc);
     e->acc_floor = 0;
     e->acc_n = 0;
 }
@@ -116,7 +130,7 @@ static void finish_message(struct earshot *e)
 
     earshot_reject r = esh_envelope_check(e->env, n, e->hooks, presence,
                                           &data, &len, &kid, &ctr);
-    (void)data;                         /* payload is read from e->env in take */
+    (void)data;                        /* payload is read from e->env in take */
     e->reject = r;
     if (r == EARSHOT_OK) {
         e->last_keyid   = kid;
@@ -129,20 +143,33 @@ static void finish_message(struct earshot *e)
     }
 }
 
+static void decode_symbol(struct earshot *e)
+{
+    if (!e->acc_n) { e->frame_bad = 1; return; }
+    for (int l = 0; l < e->p.lanes; l++) {
+        int v = lane_argmax(e, l, e->acc_n, e->acc_floor);
+        if (v < 0) { e->frame_bad = 1; return; }
+        if (e->nibble_n < 2 * ESH_FRAME_BYTES) {
+            int b = e->nibble_n >> 1;
+            if (e->nibble_n & 1) e->frame[b] |= (uint8_t)(v << 4);
+            else                 e->frame[b]  = (uint8_t)v;
+            e->nibble_n++;
+        }
+    }
+}
+
 static void process_subblock(struct earshot *e)
 {
-    float db[ESH_BINS];
+    float db[ESH_MAX_BINS];
     goertzel(e, e->buf, ESH_SUBBLOCK, db);
 
     float floor_db = 0;
-    for (int i = 0; i < 2 * ESH_TONES; i++) floor_db += db[1 + i];
-    floor_db /= (float)(2 * ESH_TONES);
+    for (int i = 1; i < e->bins; i++) floor_db += db[i];
+    floor_db /= (float)(e->bins - 1);
 
-    /* Lock on the rising edge of the sync tone, not on any sub-block that
-     * happens to be over threshold. Without this, a transient (a click, a
-     * corrupted frame) can lock the state machine at a wrong phase and, because
-     * the real sync is still ringing when the misframed frame ends, it re-locks
-     * at the same wrong phase every frame and never recovers. */
+    /* Lock on the rising edge of the sync tone, not on any over-threshold
+     * sub-block. Without this a transient locks the state machine at a wrong
+     * phase that then repeats every frame and never recovers. */
     int sync_now = db[0] > floor_db + ESH_SYNC_DB;
     int sync_edge = sync_now && !e->sync_prev;
     e->sync_prev = sync_now;
@@ -151,47 +178,34 @@ static void process_subblock(struct earshot *e)
         if (sync_edge) {
             e->locked_on = 1;
             e->sub = 1;                 /* the next sub-block opens symbol 1    */
-            e->frame_n = 0;
+            e->nibble_n = 0;
             e->frame_bad = 0;
+            memset(e->frame, 0, sizeof e->frame);
             clear_accum(e);
         }
         return;
     }
 
-    int sym   = e->sub / ESH_SUB_PER_SYM;
-    int phase = e->sub % ESH_SUB_PER_SYM;
+    int sym   = e->sub / e->p.sub_per_symbol;
+    int phase = e->sub % e->p.sub_per_symbol;
 
-    if (phase == 1 || phase == 2) {     /* sample the middle of the symbol     */
-        for (int i = 0; i < ESH_TONES; i++) {
-            e->acc_a[i] += db[1 + i];
-            e->acc_b[i] += db[1 + ESH_TONES + i];
-        }
+    if (phase >= e->p.sample_first && phase <= e->p.sample_last) {
+        for (int l = 0; l < e->p.lanes; l++)
+            for (int i = 0; i < e->p.tones; i++)
+                e->acc[l][i] += db[1 + l * e->p.tones + i];
         e->acc_floor += floor_db;
         e->acc_n++;
     }
 
-    if (phase == ESH_SUB_PER_SYM - 1) { /* symbol boundary: decode it          */
-        if (sym == 0) {                 /* the sync symbol carries no data     */
-            clear_accum(e);
-            e->sub++;
-            return;
-        }
-        if (e->acc_n) {
-            int lo = lane_argmax(e->acc_a, e->acc_n, e->acc_floor);
-            int hi = lane_argmax(e->acc_b, e->acc_n, e->acc_floor);
-            if (lo < 0 || hi < 0)
-                e->frame_bad = 1;
-            else if (e->frame_n < ESH_FRAME_BYTES)
-                e->frame[e->frame_n++] = (uint8_t)(lo | (hi << 4));
-        } else {
-            e->frame_bad = 1;
-        }
+    if (phase == e->p.sub_per_symbol - 1) {   /* symbol boundary */
+        if (sym >= 1)
+            decode_symbol(e);
         clear_accum(e);
     }
 
     e->sub++;
-    if (e->sub >= ESH_SYMS_PER_FRM * ESH_SUB_PER_SYM) {
-        if (!e->frame_bad && e->frame_n == ESH_FRAME_BYTES)
+    if (e->sub >= (1 + e->p.data_symbols) * e->p.sub_per_symbol) {
+        if (!e->frame_bad && e->nibble_n == 2 * ESH_FRAME_BYTES)
             esh_fountain_push(&e->fnt, e->frame);
         e->locked_on = 0;
         if (e->fnt.complete && e->msg_len < 0)
@@ -201,14 +215,21 @@ static void process_subblock(struct earshot *e)
 
 /* ---- public API ------------------------------------------------------- */
 
-void earshot_init(earshot_t *e, const earshot_hooks *hooks)
+void earshot_init_profile(earshot_t *e, const earshot_hooks *hooks,
+                          const earshot_profile_t *profile)
 {
     memset(e, 0, sizeof *e);
     e->hooks   = hooks;
+    e->p       = *profile;
     e->msg_len = -1;
     e->status  = EARSHOT_IDLE;
     e->reject  = EARSHOT_OK;
     prepare_goertzel(e);
+}
+
+void earshot_init(earshot_t *e, const earshot_hooks *hooks)
+{
+    earshot_init_profile(e, hooks, &EARSHOT_PROFILE_N);
 }
 
 earshot_status earshot_feed(earshot_t *e, const int16_t *samples, size_t n)

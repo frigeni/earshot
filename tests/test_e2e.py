@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-test_e2e.py - end-to-end bench (SPEC 8).
+test_e2e.py - end-to-end bench (SPEC 8, spec/PROFILE-A.md section 8).
 
-Synthesises the waveform with tools/earshot_tx.py, decodes it with the compiled
-`tests/decode`, and checks the recovered payload. Covers clean audio, additive
+Profile N: synthesises the waveform with tools/earshot_tx.py, decodes it with
+the compiled `tests/decode`, checks the payload. Covers clean audio, additive
 noise, a late-joining receiver, frame loss, mid-stream corruption, and the
 authentication rejections.
+
+Profile A: drives the integer device transmitter (`tests/emit`), renders it as a
+square wave, and decodes it back. Covers the harmonic plan, duty-cycle error,
+reverberation and noise.
 
 Also cross-checks the Python primitives against the published constants, so a
 divergence between the Python and C implementations is caught here.
@@ -22,9 +26,12 @@ sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 import earshot_tx as tx  # noqa: E402
 
 DECODE = os.path.join(HERE, "decode")
+EMIT = os.path.join(HERE, "emit")
 KEY = bytes(range(16))
 KEYHEX = KEY.hex()
 ALT_KEYHEX = bytes(range(1, 17)).hex()
+
+DIAG = b"err 0x2A sn 7731 fw 1.4.0 up 512h evt underspeed,overtemp"
 
 PAYLOAD = ("If you can read this, it arrived as sound. The C receiver "
            "reassembled it from frames out of order.").encode("utf-8")
@@ -83,9 +90,36 @@ def primitives():
     note(ok, "python crc8 / crc16 vs check string")
 
 
+def profile_a():
+    """Device transmitter (tests/emit, integer) -> square-wave render -> C
+    decoder in Profile A mode. Covers the harmonic plan, duty-cycle error,
+    reverberation and noise (brief point 7)."""
+    p = subprocess.run([EMIT, "--key", KEYHEX, "--counter", "1", "--frames", "45",
+                        "--text", DIAG.decode()], capture_output=True)
+    if p.returncode != 0:
+        note(False, "profile A: emit", p.stderr.decode())
+        return
+    syms = [int(x) for x in p.stdout.split()]
+
+    def run(name, **kw):
+        audio = tx.profile_a_symbols(syms, offset=1234, **kw)
+        d = subprocess.run([DECODE, "--profile", "a", "--key", KEYHEX,
+                            "--counter", "0"],
+                           input=tx.pcm_bytes(audio), capture_output=True)
+        ok = d.returncode == 0 and d.stdout == DIAG
+        note(ok, "profile A: " + name)
+        if not ok:
+            sys.stderr.write(d.stderr.decode("utf-8", "replace"))
+
+    run("clean square wave")
+    run("2nd-harmonic duty error", duty2=0.10)
+    run("reverberation", reverb=True)
+    run("reverb + noise + duty", reverb=True, noise=0.02, duty2=0.06)
+
+
 def main():
-    if not os.path.exists(DECODE):
-        sys.exit("build tests/decode first (make)")
+    if not os.path.exists(DECODE) or not os.path.exists(EMIT):
+        sys.exit("build tests/decode and tests/emit first (make)")
 
     primitives()
 
@@ -111,6 +145,8 @@ def main():
     case("first config after the provisioning window", counter=1, count=55,
          offset=2_900_000, decode_args=("--counter", "0", "--no-button"),
          expect_rc=3, expect_payload=False)
+
+    profile_a()
 
     print()
     if fails:

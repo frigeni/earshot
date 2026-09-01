@@ -229,6 +229,66 @@ def pcm_bytes(samples):
     return a.tobytes()
 
 
+# ---- Profile A: audible square-wave return channel (spec/PROFILE-A.md) ----
+
+PROF_A = dict(sync=2300.0, base=2600.0, step=100.0, tones=16,
+              tone_ms=40, guard_ms=20)
+
+_SQ_CACHE = {}
+
+
+def _square_symbol(freq, tone_ms, guard_ms, harmonics, duty2):
+    """One Profile A symbol: a 50% square wave (band-unlimited: fundamental plus
+    odd harmonics at 1/k) for tone_ms, then silence for guard_ms. `duty2` adds a
+    2nd-harmonic term to model a timer that cannot hit exactly 50%."""
+    key = (freq, tone_ms, guard_ms, harmonics, duty2)
+    hit = _SQ_CACHE.get(key)
+    if hit is not None:
+        return hit
+    n = int(SR * tone_ms / 1000.0)
+    g = int(SR * guard_ms / 1000.0)
+    ramp = int(SR * 0.003)
+    y = [0.0] * (n + g)
+    for i in range(n):
+        t = i / SR
+        s = 0.0
+        for k in range(1, harmonics + 1, 2):
+            s += math.sin(2 * math.pi * k * freq * t) / k
+        if duty2:
+            s += duty2 * math.sin(2 * math.pi * 2 * freq * t)
+        env = 1.0
+        if i < ramp:
+            env = i / ramp
+        elif i > n - ramp:
+            env = (n - i) / ramp
+        y[i] = 0.30 * env * s
+    _SQ_CACHE[key] = y
+    return y
+
+
+def _reverb(y, taps=((0.023, 0.5), (0.037, 0.34), (0.053, 0.24), (0.071, 0.17))):
+    out = list(y)
+    for delay_s, gain in taps:
+        d = int(SR * delay_s)
+        for i in range(d, len(y)):
+            out[i] += gain * y[i - d]
+    return out
+
+
+def profile_a_symbols(symbols, harmonics=9, duty2=0.0, reverb=False,
+                      noise=0.0, offset=0, cfg=PROF_A):
+    """Render a symbol stream (-1 = sync, 0..15 = tone) to a waveform."""
+    y = [0.0] * offset
+    for s in symbols:
+        f = cfg["sync"] if s < 0 else cfg["base"] + cfg["step"] * s
+        y += _square_symbol(f, cfg["tone_ms"], cfg["guard_ms"], harmonics, duty2)
+    if reverb:
+        y = _reverb(y)
+    if noise:
+        y = [v + random.gauss(0, noise) for v in y]
+    return y
+
+
 # ---- CLI --------------------------------------------------------------
 
 def _load_key(args):
