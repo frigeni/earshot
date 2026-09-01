@@ -1,0 +1,24 @@
+# build artifacts
+*.o
+*.a
+*.obj
+*.exe
+*.out
+/build/
+/tests/test_unit
+/tests/*.pcm
+/tests/*.raw
+
+# amalgamation output
+/earshot_single.h
+
+# operator secrets — never commit a real key
+operator.json
+*.operator.json
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
