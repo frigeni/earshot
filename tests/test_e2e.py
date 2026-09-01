@@ -50,13 +50,14 @@ def decode(pcm, *args, expect_rc=0):
     return p.returncode, p.stdout, p.stderr
 
 
-def case(name, *, count=260, noise=0.0, skip=0, loss=0.0, corrupt=False,
-         seed=7, counter=1, decode_args=(), expect_rc=0, expect_payload=True):
+def case(name, *, count=70, noise=0.0, skip=0, loss=0.0, corrupt=False,
+         seed=7, counter=1, offset=1234, decode_args=(), expect_rc=0,
+         expect_payload=True):
     K, allframes = frames_for(PAYLOAD, count, counter=counter)
     rng = random.Random(seed)
     kept = [f for i, f in enumerate(allframes)
             if i >= skip and rng.random() >= loss]
-    audio = tx.synth(kept, noise=noise, offset=1234)
+    audio = tx.synth(kept, noise=noise, offset=offset)
     if corrupt:
         # wipe a stretch of samples in the first third of the stream
         a = len(audio) // 5
@@ -89,11 +90,11 @@ def main():
     primitives()
 
     case("clean signal")
-    case("additive noise, mild", noise=0.010)
-    case("late receiver (skip 60 frames)", skip=60)
-    case("35% frame loss", loss=0.35)
-    case("mid-stream corruption", corrupt=True)
-    case("noise + loss + late", noise=0.008, loss=0.20, skip=25)
+    case("additive noise, mild", noise=0.010, count=90)
+    case("late receiver (skip 55 frames)", skip=55, count=130)
+    case("35% frame loss", loss=0.35, count=110)
+    case("mid-stream corruption", corrupt=True, count=90)
+    case("noise + loss + late", noise=0.008, loss=0.20, skip=20, count=130)
 
     # authentication / anti-replay
     case("replay: stored counter ahead", counter=1,
@@ -106,6 +107,10 @@ def main():
          expect_rc=3, expect_payload=False)
     case("forward jump > delta with button", counter=3000,
          decode_args=("--counter", "1"), expect_rc=0)
+    # first provisioning past the power-on window, no button -> needs presence
+    case("first config after the provisioning window", counter=1, count=55,
+         offset=2_900_000, decode_args=("--counter", "0", "--no-button"),
+         expect_rc=3, expect_payload=False)
 
     print()
     if fails:

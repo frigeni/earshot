@@ -15,6 +15,7 @@ This file is also imported by the test bench for its codec functions.
 SPDX-License-Identifier: Apache-2.0
 """
 import argparse
+import array
 import json
 import math
 import random
@@ -185,7 +186,14 @@ def fountain_frames(env, count, seed_fn=None):
 
 # ---- waveform (SPEC 3) -------------------------------------------------
 
+_SYM_CACHE = {}
+
+
 def _symbol(freqs, amp):
+    key = (amp, tuple(freqs))
+    hit = _SYM_CACHE.get(key)
+    if hit is not None:
+        return hit
     n = int(SR * SYM)
     ramp = int(SR * 0.006)
     y = [0.0] * n
@@ -198,24 +206,27 @@ def _symbol(freqs, amp):
             elif i > n - ramp:
                 g *= (n - i) / ramp
             y[i] += g * math.sin(w * i)
+    _SYM_CACHE[key] = y
     return y
 
 
 def synth(frames, noise=0.0, offset=0):
     y = [0.0] * offset
     for f in frames:
-        y += _symbol([SYNC], 0.5)
+        y += _symbol((SYNC,), 0.5)
         for byte in f:
-            y += _symbol([LANE_A + (byte & 15) * STEP, LANE_B + (byte >> 4) * STEP], 0.25)
+            y += _symbol((LANE_A + (byte & 15) * STEP, LANE_B + (byte >> 4) * STEP), 0.25)
     if noise:
         y = [v + random.gauss(0, noise) for v in y]
     return y
 
 
 def pcm_bytes(samples):
-    return b"".join(
-        struct.pack("<h", max(-32767, min(32767, int(v * 20000)))) for v in samples
-    )
+    a = array.array(
+        "h", (max(-32767, min(32767, int(v * 20000))) for v in samples))
+    if sys.byteorder != "little":
+        a.byteswap()
+    return a.tobytes()
 
 
 # ---- CLI --------------------------------------------------------------

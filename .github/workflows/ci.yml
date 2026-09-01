@@ -30,8 +30,9 @@ jobs:
       - name: single-header amalgamation compiles
         run: |
           python3 tools/amalgamate.py
-          printf '#define EARSHOT_IMPLEMENTATION\n#include "earshot_single.h"\n' > /tmp/amalg.c
-          ${{ matrix.cc }} -c -O2 -std=c99 -Wall -Wextra -Werror /tmp/amalg.c -o /tmp/amalg.o
+          printf '#define EARSHOT_IMPLEMENTATION\n#include "earshot_single.h"\n' > amalg.c
+          ${{ matrix.cc }} -c -O2 -std=c99 -Wall -Wextra -Werror -I. amalg.c -o amalg.o
+          rm -f amalg.c amalg.o earshot_single.h
 
   embedded:
     runs-on: ubuntu-latest

@@ -16,6 +16,10 @@
 operator.json
 *.operator.json
 
+# python
+__pycache__/
+*.pyc
+
 # editor / OS
 .vscode/
 .idea/

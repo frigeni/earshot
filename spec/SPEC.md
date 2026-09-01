@@ -103,12 +103,14 @@ Raw frame rate ≈ 11.5 byte/s; useful message rate after fountain overhead
 ### 3.5 Receiver notes (informative)
 
 The reference receiver runs a 33-bin Goertzel (1 sync + 16 lane A + 16 lane B)
-on each 20 ms sub-block, with no dynamic allocation, about 8 KB of flash and
-5 KB of static RAM, under 2 MMAC/s on a Cortex-M4. It searches for the sync tone
-at least `SYNC_DB` above the in-band noise floor, then samples the two middle
-sub-blocks of each following symbol; per lane it takes the strongest bin
-provided it clears the floor by `TONE_DB` and the runner-up by `MARGIN_DB`,
-otherwise the frame is marked bad and dropped.
+on each 20 ms sub-block, with no dynamic allocation, under 2 MMAC/s on a
+Cortex-M4. It locks on the **rising edge** of the sync tone — a sub-block at
+least `SYNC_DB` above the in-band noise floor whose predecessor was not — rather
+than on any sub-block over threshold; without this a transient can lock the
+state machine at a wrong phase that then repeats every frame and never
+recovers. It then samples the two middle sub-blocks of each following symbol;
+per lane it takes the strongest bin provided it clears the floor by `TONE_DB`
+and the runner-up by `MARGIN_DB`, otherwise the frame is marked bad and dropped.
 
 ---
 

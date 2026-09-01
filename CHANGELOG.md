@@ -17,4 +17,9 @@ All notable changes to Earshot are recorded here. The protocol version is the
   was `[len][data][crc16]`.
 - Receiver gains authentication-tag verification and the §5.4 acceptance rule
   (monotonic counter, physical-presence gate, optional one-time lock).
+- Receiver locks on the rising edge of the sync tone. The prototype locked on
+  any over-threshold sub-block, which let a transient wedge the state machine
+  at a wrong frame phase permanently; found by the new corruption test.
+- Peeling decoder is now iterative (explicit FIFO) instead of recursive, so
+  decode depth cannot overflow a small stack.
 - All source comments and identifiers translated from Italian to English.

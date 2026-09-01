@@ -31,6 +31,7 @@ struct earshot {
     int      buf_n;
 
     int      locked_on;                /* 0 = seeking sync, 1 = reading frame  */
+    int      sync_prev;                /* sync tone over threshold last sub-block */
     int      sub;                      /* sub-block index within the frame     */
     float    acc_a[ESH_TONES];
     float    acc_b[ESH_TONES];
@@ -137,8 +138,17 @@ static void process_subblock(struct earshot *e)
     for (int i = 0; i < 2 * ESH_TONES; i++) floor_db += db[1 + i];
     floor_db /= (float)(2 * ESH_TONES);
 
+    /* Lock on the rising edge of the sync tone, not on any sub-block that
+     * happens to be over threshold. Without this, a transient (a click, a
+     * corrupted frame) can lock the state machine at a wrong phase and, because
+     * the real sync is still ringing when the misframed frame ends, it re-locks
+     * at the same wrong phase every frame and never recovers. */
+    int sync_now = db[0] > floor_db + ESH_SYNC_DB;
+    int sync_edge = sync_now && !e->sync_prev;
+    e->sync_prev = sync_now;
+
     if (!e->locked_on) {
-        if (db[0] > floor_db + ESH_SYNC_DB) {
+        if (sync_edge) {
             e->locked_on = 1;
             e->sub = 1;                 /* the next sub-block opens symbol 1    */
             e->frame_n = 0;
